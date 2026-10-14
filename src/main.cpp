@@ -3,9 +3,71 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <thread>
+#include <string>
 #include "triangle.h"
+#include "glyph.h"
 
-std::unique_ptr<Triangle> triangle;
+std::vector<Path> paths;
+float scaleMultiplier = 0.9;
+float viewX = 0.f;
+
+
+void drawGlyph(sf::RenderWindow& window,
+               const std::vector<Path>& paths)
+{
+    for (const Path& path : paths) {
+        if (path.size() < 2)
+            continue;
+
+        sf::VertexArray lines(sf::PrimitiveType::LineStrip,
+                              path.size());
+
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            lines[i].position = path[i];
+            lines[i].color = sf::Color::White;
+        }
+
+        window.draw(lines);
+    }
+}
+
+void viewportScale(std::vector<Path>& paths)
+{
+    float minX = 99999.f;
+    float maxX = -99999.f;
+    float minY = 99999.f;
+    float maxY = -99999.f;
+
+    for (const Path& path : paths) {
+        for (const sf::Vector2f& point : path) {
+            minX = std::min(minX, point.x);
+            maxX = std::max(maxX, point.x);
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
+        }
+    }
+
+    float width = maxX - minX;
+    float height = maxY - minY;
+    float scale = std::max(width, height) / scaleMultiplier;
+
+    if (width > 0 && height > 0) {
+        float centerX = (minX + maxX) / 2.f;
+        float centerY = (minY + maxY) / 2.f;
+
+        for (Path& path : paths) {
+            for (sf::Vector2f& point : path) {
+                point.x = 2.f * (point.x - centerX) / scale;
+                point.y = 2.f * (point.y - centerY) / scale;
+            }
+        }
+    }
+
+}
+
 
 void renderingThread(sf::RenderWindow& window, std::atomic<bool>& running, std::atomic<bool>& contextReady)
 {
@@ -34,7 +96,7 @@ void renderingThread(sf::RenderWindow& window, std::atomic<bool>& running, std::
     // match OpenGL's -1 to 1 canonical view with the Y axis pointing up.
 	// Passing a negative height (-2.f) flips the Y-axis upside down!
 	// Now: Top-Left is (-1.0, 1.0) and Bottom-Right is (1.0, -1.0)
-	sf::View view(sf::Vector2f(0.f, 0.f), sf::Vector2f(2.f, -2.f));
+    sf::View view(sf::Vector2f(viewX, 0.f), sf::Vector2f(2.f, -2.f));
 	window.setView(view);
 
     // Background and alpha blending (for transparency)
@@ -42,21 +104,14 @@ void renderingThread(sf::RenderWindow& window, std::atomic<bool>& running, std::
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	sf::CircleShape circ;
-	circ.setRadius(0.4f);
-	circ.setPointCount(100);
-	circ.setPosition(sf::Vector2f(-0.4f, -0.4f));
-	circ.setFillColor(sf::Color(150, 50, 250));
-	circ.setOutlineThickness(0.01f);
-	circ.setOutlineColor(sf::Color(250, 150, 100));
-    
     while(running) {
         // draw...
-		
+		view.setCenter(sf::Vector2f(viewX, 0.f));
+        window.setView(view);
+
         glClear(GL_COLOR_BUFFER_BIT);
-		window.draw(*triangle);
 		window.pushGLStates(); // Save OpenGL states before drawing SFML shapes
-		window.draw(circ);
+		drawGlyph(window, paths);
 		window.popGLStates(); // Restore OpenGL states after drawing SFML shapes
 		window.display();
     }
@@ -94,11 +149,27 @@ int main() {
     }
 
 	// assets
-	triangle = std::make_unique<Triangle>(
-		std::vector<sf::Vector2f>{
-			sf::Vector2f(0.8, 0), 
-			sf::Vector2f(-0.4, 0.693), 
-			sf::Vector2f(-0.4, -0.693)});
+    std::string text;
+    std::getline(std::cin, text);
+
+
+    float offset = 0;
+    float space = 1.0;
+    for (char c : text) {
+        int num = c;
+        std::string filename = "fonts/cmuntt/gly_" + std::to_string(num);
+        std::vector<Path> glyphPaths = loadGlyph(filename);
+
+        for (Path& path : glyphPaths) {
+            for (sf::Vector2f& point : path) {
+                point.x += offset;
+            }
+        }
+        paths.insert(paths.end(), glyphPaths.begin(), glyphPaths.end());
+        offset += space;
+    }
+    viewportScale(paths);
+
 
 	std::atomic<bool> running(true);
     std::atomic<bool> contextReady(false);
@@ -125,13 +196,29 @@ int main() {
                 }
 
                 // Do additional cleanup here before closing the window
-                triangle.reset(); // Release the Triangle object	
                 window.close();
 			}
 
             if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                 
-                // Key press events are used to trigger actions, not to hold them down.
+                if (keyPressed->code == sf::Keyboard::Key::Up) {
+                    std::cout << "Up arrow pressed!" << std::endl;
+                    scaleMultiplier += 0.1;
+                    viewportScale(paths);
+                }
+                else if (keyPressed->code == sf::Keyboard::Key::Down) {
+                    std::cout << "Down arrow pressed!" << std::endl;
+                    scaleMultiplier -= 0.1;
+                    viewportScale(paths);
+                }
+                else if (keyPressed->code == sf::Keyboard::Key::Right) {
+                    std::cout << "Right arrow pressed!" << std::endl;
+                    viewX += 0.1f;
+                }
+                else if (keyPressed->code == sf::Keyboard::Key::Left) {
+                    std::cout << "Left arrow pressed!" << std::endl;
+                    viewX -= 0.1f;
+                }
 
             }
 
